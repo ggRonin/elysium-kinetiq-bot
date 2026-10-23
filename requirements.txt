@@ -3,3 +3,4 @@ eth-account>=0.10
 python-dotenv
 web3>=7
 msgpack>=1.0.5,<2
+aiohttp>=3.9
