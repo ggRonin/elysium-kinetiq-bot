@@ -1,0 +1,13 @@
+# личные данные — никогда не в репозиторий
+.env
+accounts.txt
+Proxy.txt
+*.tmp
+logs/
+
+# окружение и служебное
+.venv/
+__pycache__/
+*.pyc
+.idea/
+.vscode/

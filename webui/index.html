@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elysium бот</title>
+<style>
+  :root {
+    --bg: #0b1210; --panel: #111b18; --panel2: #16231f; --line: #22332d; --text: #e6f0ec; --muted: #8aa39a;
+    --accent: #5fe3b3; --accent-ink: #062a1e; --warn: #f2c14e; --err: #ff6b6b; --link: #7cc7ff;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2);
+    color: var(--text); padding: 7px 14px; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.danger { background: #3a1717; border-color: #6b2a2a; color: #ffd0d0; }
+  button.small { padding: 4px 10px; font-size: 12.5px; }
+
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 10px 18px;
+    background: rgba(11, 18, 16, .92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0 8px 0 0; letter-spacing: .2px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #55645f; }
+  .pill.on { color: var(--accent); border-color: #2b5a49; }
+  .pill.on .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .spacer { flex: 1; }
+  #dirty { color: var(--warn); font-size: 13px; display: none; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); height: calc(100% - 57px); }
+  .left { overflow: auto; padding: 16px 18px 40px; }
+  .right { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: #070c0b; }
+
+  .cards { column-count: 2; column-gap: 14px; }
+  @media (max-width: 1500px) { .cards { column-count: 1; } }
+  @media (max-width: 1000px) { .layout { grid-template-columns: 1fr; height: auto; } .right { height: 70vh; border-left: 0; border-top: 1px solid var(--line); } }
+
+  .card { break-inside: avoid; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; margin: 0 0 14px; }
+  .card h2 { font-size: 15px; margin: 0; }
+  .card .desc { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
+  .links { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+  .links a { font-size: 12.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid #23415a; background: #0f1d28; }
+  .scripts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .sec { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; margin: 10px 0 2px; }
+
+  .field { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 4px 12px; align-items: center;
+    padding: 7px 0; border-top: 1px dashed #1c2a26; }
+  .field:first-of-type { border-top: 0; }
+  .field .name { font-size: 13.5px; }
+  .field .key { font-family: var(--mono); font-size: 11.5px; color: #5d7a70; margin-left: 6px; }
+  .field .hint { grid-column: 1 / -1; color: var(--muted); font-size: 12.5px; margin-top: -2px; }
+  input, select, textarea { font: inherit; color: var(--text); background: #0c1513; border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 9px; width: 100%; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .changed { border-color: var(--warn) !important; }
+
+  .accounts { column-span: all; }
+  .acc-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; }
+  @media (max-width: 1200px) { .acc-grid { grid-template-columns: 1fr; } }
+  .acc-grid label { display: block; font-weight: 600; font-size: 13.5px; }
+  .acc-grid .example { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 3px 0 6px; word-break: break-all; }
+  .acc-grid .count { color: var(--accent); font-weight: 600; margin-left: 6px; }
+  textarea { font-family: var(--mono); font-size: 12.5px; min-height: 170px; resize: vertical; white-space: pre; }
+  textarea.secret:not(:focus) { filter: blur(4px); }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+  .term-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  .term-head b { font-size: 14px; }
+  .term-head label { color: var(--muted); font-size: 12.5px; display: flex; gap: 5px; align-items: center; }
+  .term-head input { width: auto; }
+  #term { flex: 1; overflow: auto; margin: 0; padding: 10px 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap;
+    word-break: break-word; color: #cfe1da; }
+  #term .w { color: var(--warn); }
+  #term .e { color: var(--err); }
+  #term .sys { color: var(--accent); }
+  #term .tool { color: #b9a6ff; }
+  #term a { color: var(--link); }
+  .toast { position: fixed; right: 18px; bottom: 18px; background: var(--panel2); border: 1px solid var(--line);
+    padding: 10px 14px; border-radius: 10px; display: none; z-index: 10; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Elysium бот</h1>
+  <span class="pill" id="st-main"><span class="dot"></span><span>бот остановлен</span></span>
+  <span class="pill" id="st-tool" style="display:none"><span class="dot"></span><span></span></span>
+  <span id="dirty">есть несохранённые изменения</span>
+  <span class="spacer"></span>
+  <button id="btn-save">Сохранить</button>
+  <button class="primary" id="btn-start">▶ Пуск</button>
+  <button class="danger" id="btn-stop" disabled>■ Стоп</button>
+</header>
+
+<div class="layout">
+  <div class="left">
+    <div class="cards" id="cards"></div>
+  </div>
+  <div class="right">
+    <div class="term-head">
+      <b>Терминал</b>
+      <span class="spacer"></span>
+      <label><input type="checkbox" id="autoscroll" checked> автопрокрутка</label>
+      <button class="small" id="btn-tool-stop" style="display:none">■ стоп утилиты</button>
+      <button class="small" id="btn-clear">очистить</button>
+    </div>
+    <pre id="term"></pre>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let state = null, since = 0, dirty = false;
+
+function toast(text, ms = 2500) {
+  const t = $("#toast"); t.textContent = text; t.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.style.display = "none"), ms);
+}
+function setDirty(v) { dirty = v; $("#dirty").style.display = v ? "inline" : "none"; }
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.ok === false) throw new Error(j.error || ("HTTP " + r.status));
+  return j;
+}
+
+function fieldHtml(sec, f) {
+  const id = `f-${sec}-${f.key}`;
+  const ctrl = f.options
+    ? `<select id="${id}" data-sec="${sec}" data-key="${f.key}" data-orig="${esc(f.value)}">${f.options.map(([v, t]) =>
+        `<option value="${esc(v)}"${v === f.value ? " selected" : ""}>${esc(v)} — ${esc(t)}</option>`).join("")}</select>`
+    : `<input id="${id}" data-sec="${sec}" data-key="${f.key}" data-orig="${esc(f.value)}" value="${esc(f.value)}" spellcheck="false">`;
+  return `<div class="field"><div class="name">${esc(f.label)}<span class="key">${esc(f.key)}</span></div>${ctrl}
+    ${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ""}</div>`;
+}
+
+function render() {
+  const cfg = state.config;
+  const acc = `
+    <div class="card accounts">
+      <h2>Аккаунты и прокси</h2>
+      <div class="desc">Сохраняются в accounts.txt и Proxy.txt. Текст размыт, пока поле не в фокусе: там мнемоники.</div>
+      <div class="acc-grid">
+        <div>
+          <label>Аккаунты<span class="count" id="cnt-accounts"></span></label>
+          <div class="example">по одному в строке: мнемоника из 12/24 слов,логин:пароль@ip:порт<br>
+            word1 word2 … word12,user123:pass456@1.2.3.4:10000</div>
+          <textarea class="secret" id="t-accounts" spellcheck="false"></textarea>
+        </div>
+        <div>
+          <label>Запасные прокси<span class="count" id="cnt-proxy"></span></label>
+          <div class="example">по одному в строке: логин:пароль@ip:порт<br>user123:pass456@1.2.3.4:10001</div>
+          <textarea id="t-proxy" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </div>`;
+  const cards = state.cards.map(c => {
+    const secs = c.sections.filter(s => cfg[s]).map(s => {
+      const fields = cfg[s].fields.map(f => fieldHtml(s, f)).join("");
+      return (c.sections.length > 1 ? `<div class="sec">[${esc(s)}]</div>` : "") + fields;
+    }).join("");
+    const env = c.env ? `<div class="field"><div class="name">ключ CapSolver<span class="key">.env</span></div>
+        <input id="capsolver" type="password" value="${esc(state.capsolver)}" data-orig="${esc(state.capsolver)}" spellcheck="false">
+        <div class="hint">нужен для фосета Elysium и крана Alchemy (решение капчи)</div></div>` : "";
+    const links = c.links.length ? `<div class="links">${c.links.map(([t, u]) =>
+        `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)} ↗</a>`).join("")}</div>` : "";
+    const scripts = (c.scripts || []).length ? `<div class="scripts">${c.scripts.map(([id, t]) =>
+        `<button class="small" data-run="${id}">${esc(t)}</button>`).join("")}</div>` : "";
+    return `<div class="card" id="card-${c.id}"><h2>${esc(c.title)}</h2><div class="desc">${esc(c.desc || "")}</div>
+      ${links}${env}${secs}${scripts}</div>`;
+  }).join("");
+  $("#cards").innerHTML = acc + cards;
+  $("#t-accounts").value = state.files.accounts;
+  $("#t-proxy").value = state.files.proxy;
+  updateCounts();
+
+  document.querySelectorAll("[data-key], #capsolver").forEach(el => el.addEventListener("input", () => {
+    el.classList.toggle("changed", el.value !== el.dataset.orig); setDirty(true);
+  }));
+  ["#t-accounts", "#t-proxy"].forEach(s => $(s).addEventListener("input", () => { updateCounts(); setDirty(true); }));
+  document.querySelectorAll("[data-run]").forEach(b => b.addEventListener("click", () => runScript(b.dataset.run)));
+}
+
+function updateCounts() {
+  const n = t => t.split("\n").filter(l => l.trim() && !l.trim().startsWith("#")).length;
+  $("#cnt-accounts").textContent = n($("#t-accounts").value);
+  $("#cnt-proxy").textContent = n($("#t-proxy").value);
+}
+
+async function save(quiet) {
+  const config = {};
+  document.querySelectorAll("[data-key]").forEach(el => {
+    (config[el.dataset.sec] ||= {})[el.dataset.key] = el.value.trim();
+  });
+  const body = { config, files: { accounts: $("#t-accounts").value, proxy: $("#t-proxy").value } };
+  if ($("#capsolver")) body.capsolver = $("#capsolver").value;
+  await api("/api/save", body);
+  document.querySelectorAll("[data-key], #capsolver").forEach(el => { el.dataset.orig = el.value; el.classList.remove("changed"); });
+  setDirty(false);
+  if (!quiet) toast("Сохранено");
+}
+
+async function runScript(id) {
+  try { await save(true); await api("/api/run", { script: id }); poll(); }
+  catch (e) { toast("Не запустилось: " + e.message, 4000); }
+}
+
+function setStatus(st) {
+  const m = st.main, t = st.tool;
+  $("#st-main").classList.toggle("on", m.running);
+  $("#st-main span:last-child").textContent = m.running ? "бот работает" : "бот остановлен";
+  $("#btn-start").disabled = m.running;
+  $("#btn-stop").disabled = !m.running;
+  $("#st-tool").style.display = t.running ? "inline-flex" : "none";
+  $("#st-tool").classList.toggle("on", t.running);
+  $("#st-tool span:last-child").textContent = t.running ? "утилита: " + t.script : "";
+  $("#btn-tool-stop").style.display = t.running ? "inline-block" : "none";
+}
+
+function lineHtml(r) {
+  let h = esc(r.text).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+  let cls = r.text.startsWith("▶") || r.text.startsWith("■") ? "sys"
+    : / ERROR /.test(r.text) || /Traceback|Error:/.test(r.text) ? "e" : / WARNING /.test(r.text) ? "w" : "";
+  if (r.slot === "tool" && !cls) cls = "tool";
+  return `<div${cls ? ` class="${cls}"` : ""}>${r.slot === "tool" ? "[утилита] " : ""}${h}</div>`;
+}
+
+async function poll() {
+  try {
+    const j = await api("/api/logs?since=" + since);
+    if (j.lines.length) {
+      const term = $("#term"), atBottom = term.scrollTop + term.clientHeight >= term.scrollHeight - 30;
+      term.insertAdjacentHTML("beforeend", j.lines.map(lineHtml).join(""));
+      since = j.lines[j.lines.length - 1].seq;
+      while (term.childElementCount > 5000) term.firstElementChild.remove();
+      if ($("#autoscroll").checked && atBottom || $("#autoscroll").checked && j.lines.length > 200) term.scrollTop = term.scrollHeight;
+    }
+    setStatus(j.status);
+  } catch (e) { /* панель закрыта или перезапускается */ }
+}
+
+$("#btn-save").onclick = () => save().catch(e => toast("Ошибка сохранения: " + e.message, 5000));
+$("#btn-start").onclick = () => runScript("main");
+$("#btn-stop").onclick = async () => { await api("/api/stop", { slot: "main" }); poll(); };
+$("#btn-tool-stop").onclick = async () => { await api("/api/stop", { slot: "tool" }); poll(); };
+$("#btn-clear").onclick = () => ($("#term").innerHTML = "");
+window.addEventListener("beforeunload", e => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+(async () => {
+  state = await api("/api/state");
+  render();
+  setStatus(state.status);
+  setInterval(poll, 1000);
+  poll();
+})();
+</script>
+</body>
+</html>

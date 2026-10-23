@@ -1,0 +1,2 @@
+# Скопируй в accounts.txt. По одному аккаунту в строке: мнемоника,логин:пароль@ip:порт
+word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12,user:pass@1.2.3.4:10000
