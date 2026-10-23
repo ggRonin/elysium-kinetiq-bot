@@ -1,9 +1,8 @@
 @echo off
-chcp 65001 >nul
 cd /d "%~dp0"
 title Elysium bot - panel
 if not exist ".venv\Scripts\python.exe" (
-  echo Не найдено окружение .venv в папке бота.
+  echo [error] .venv not found in the bot folder. Create it: python -m venv .venv
   pause
   exit /b 1
 )
