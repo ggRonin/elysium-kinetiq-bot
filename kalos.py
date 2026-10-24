@@ -164,7 +164,7 @@ def nft(acc: dict, cfg: Config, tag: str) -> None:
     me = acc["address"]
     max_price = int(cfg.opt("kalos", "nft_max_price", 0.001) * 10**18)
     sd = contract(E, SEADROP, SEADROP_ABI, acc)
-    seen, now = set(), int(time.time())
+    seen, now, minted = set(), int(time.time()), 0
     calls = recent_calls(SEADROP, "mintPublic", pages=3)
     random.shuffle(calls)
     for c in calls:
@@ -186,6 +186,82 @@ def nft(acc: dict, cfg: Config, tag: str) -> None:
         link = send_tx(E, acc, SEADROP, sd.encode_abi("mintPublic", args=[nft_addr, fee_rcpt, "0x" + "0" * 40, 1]),
                        value=price)
         log.info("%s: kalos: минт NFT %s за %s HYPE, %s", tag, nft_addr, fmt(price), link)
+        minted += 1
+        if minted >= cfg.opt("kalos", "nft_per_day", 2):
+            return
+        pause(cfg)
+    if minted:
         return
     log.info("%s: kalos: нет открытого публичного дропа дешевле %s HYPE (проверено %d коллекций)", tag,
              fmt(max_price), len(seen))
+
+
+# ── маркетплейс Kalos: покупка NFT у других и выставление на продажу ─────────
+# Поинты Kalos идут за покупки и продажи NFT (и платные минты), свопы токенов не считаются.
+MARKETPLACE = "0x0FF8b7afC288AC42f82320f54a49c400f233bF07"
+_BUY = {"name": "p", "type": "tuple[]", "components": [
+    {"name": "nftAddress", "type": "address"}, {"name": "tokenId", "type": "uint256"},
+    {"name": "owner", "type": "address"}, {"name": "quantity", "type": "uint64"},
+    {"name": "maxPricePerItem", "type": "uint128"}, {"name": "paymentToken", "type": "address"},
+    {"name": "usingNative", "type": "bool"}]}
+_LIST = {"name": "p", "type": "tuple[]", "components": [
+    {"name": "nftAddress", "type": "address"}, {"name": "tokenId", "type": "uint256"},
+    {"name": "quantity", "type": "uint64"}, {"name": "pricePerItem", "type": "uint128"},
+    {"name": "expirationTime", "type": "uint64"}, {"name": "paymentToken", "type": "address"}]}
+MARKET_ABI = [
+    {"type": "function", "name": "buyItems", "stateMutability": "payable", "inputs": [_BUY], "outputs": []},
+    {"type": "function", "name": "createOrUpdateListings", "stateMutability": "nonpayable", "inputs": [_LIST],
+     "outputs": []},
+]
+NFT721_ABI = [
+    {"type": "function", "name": "ownerOf", "stateMutability": "view", "inputs": [{"name": "id", "type": "uint256"}],
+     "outputs": [{"type": "address"}]},
+    {"type": "function", "name": "isApprovedForAll", "stateMutability": "view",
+     "inputs": [{"name": "o", "type": "address"}, {"name": "op", "type": "address"}], "outputs": [{"type": "bool"}]},
+    {"type": "function", "name": "setApprovalForAll", "stateMutability": "nonpayable",
+     "inputs": [{"name": "op", "type": "address"}, {"name": "ok", "type": "bool"}], "outputs": []},
+]
+
+
+def market(acc: dict, cfg: Config, tag: str) -> None:
+    """Купить самый дешёвый ERC-721 лот у чужого продавца и сразу выставить его с наценкой."""
+    from curl_cffi import requests as http
+    from common import load_accounts
+    if not cfg.opt("kalos", "kalos_market", 0):
+        return
+    me = acc["address"]
+    max_price = int(cfg.opt("kalos", "market_max_price", 0.03) * 10**18)
+    markup = cfg.opt("kalos", "market_markup", 5.0) / 100
+    st = http.get(API + "/v2/market/state", impersonate="chrome136", timeout=60).json()
+    standard = {c["slug"]: c.get("standard") for c in st.get("collections", [])}
+    ours = {a["address"].lower() for a in load_accounts()}  # у своих аккаунтов не покупаем (wash trading)
+    now = int(time.time())
+    lots = [lt for lt in st.get("listings", [])
+            if int(lt["expiration"]) > now + 600 and int(lt["price"]) <= max_price
+            and standard.get(lt["slug"]) == "ERC721" and lt["seller"].lower() not in ours]
+    lots.sort(key=lambda lt: int(lt["price"]))
+    mk = contract(E, MARKETPLACE, MARKET_ABI, acc)
+    for lot in lots[:15]:
+        price, nft, token = int(lot["price"]), cs(lot["nft"]), int(lot["tokenId"])
+        params = [(nft, token, cs(lot["seller"]), 1, price, cs(lot["paymentToken"]), True)]
+        try:
+            simulate(mk.functions.buyItems(params), acc, price)
+        except Exception as e:
+            log.debug("%s: kalos market: лот %s #%s недоступен: %s", tag, lot["slug"], token, e)
+            continue
+        link = send_tx(E, acc, MARKETPLACE, mk.encode_abi("buyItems", args=[params]), value=price)
+        log.info("%s: kalos: куплен NFT %s #%s за %s HYPE, %s", tag, lot["slug"], token, fmt(price), link)
+        pause(cfg)
+        c = contract(E, nft, NFT721_ABI, acc)
+        if call(c.functions.ownerOf(token)).lower() != me.lower():
+            log.warning("%s: kalos: NFT %s #%s после покупки не на кошельке — не выставляю", tag, lot["slug"], token)
+            return
+        if not call(c.functions.isApprovedForAll(me, cs(MARKETPLACE))):
+            send_tx(E, acc, nft, c.encode_abi("setApprovalForAll", args=[cs(MARKETPLACE), True]))
+            pause(cfg)
+        ask = int(price * (1 + markup))
+        lst = [(nft, token, 1, ask, now + 30 * 86400, cs(lot["paymentToken"]))]
+        link = send_tx(E, acc, MARKETPLACE, mk.encode_abi("createOrUpdateListings", args=[lst]))
+        log.info("%s: kalos: NFT %s #%s выставлен за %s HYPE на 30 дней, %s", tag, lot["slug"], token, fmt(ask), link)
+        return
+    log.info("%s: kalos: нет подходящего лота дешевле %s HYPE", tag, fmt(max_price))

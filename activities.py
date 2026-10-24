@@ -36,6 +36,7 @@ ACTIONS = [
     ("kalos", "kalos_claim", "Kalos награда", kalos.claim_rewards),
     ("kalos", "kalos_swap", "Kalos swap", kalos.swap),
     ("kalos", "kalos_nft", "Kalos NFT", kalos.nft),
+    ("kalos", "kalos_market", "Kalos маркетплейс", kalos.market),
     ("bunnypad", "bunny_launch", "BunnyPad запуск", launchpads.bunnypad_launch),
     ("bunnypad", "bunnypad", "BunnyPad", launchpads.bunnypad),
     ("perpme", "perpme", "PerpMe", launchpads.perpme),
