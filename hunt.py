@@ -282,3 +282,75 @@ def run(acc: dict, cfg: Config, tag: str) -> None:
             log.info("%s: hunt: «%s» сегодня уже засчитан", tag, name)
             continue
         _claim(acc, quests, qid, name, tag, cfg)
+
+
+# ── EHUNT: разово купить 50–63 EHUNT и застейкать (Flexible, без лока) ──────
+EHUNT = "0x4C0Ba5e208734ACF8DdC127BE10E5DCA6F01cE92"
+HUNT_ROUTER = "0xBD0243B0A336C4316fBD0C01699178e95883DE2c"   # UniswapV2-роутер игры (пул EHUNT/HYPE)
+HUNT_WHYPE = "0xf4ee3103c2f380be0364a4B87a7C6A8B2cD3B1e4"    # их wrapped HYPE для пути свопа
+STAKING = "0x14f3C17481EFDEc544458710cd092A167Aeafb0b"        # ElyHuntStaking, минимум 50 EHUNT
+_PATH = {"name": "path", "type": "address[]"}
+ROUTER_ABI = [
+    {"type": "function", "name": "getAmountsIn", "stateMutability": "view",
+     "inputs": [_U("amountOut"), _PATH], "outputs": [{"type": "uint256[]"}]},
+    {"type": "function", "name": "swapETHForExactTokens", "stateMutability": "payable",
+     "inputs": [_U("amountOut"), _PATH, _A("to"), _U("deadline")], "outputs": [{"type": "uint256[]"}]},
+]
+STAKING_ABI = [
+    {"type": "function", "name": "getUserPositionCount", "stateMutability": "view", "inputs": [_A("a")],
+     "outputs": [{"type": "uint256"}]},
+    {"type": "function", "name": "minStakeAmount", "stateMutability": "view", "inputs": [],
+     "outputs": [{"type": "uint256"}]},
+    {"type": "function", "name": "stake", "stateMutability": "nonpayable", "inputs": [_U("tierId"), _U("amount")],
+     "outputs": []},
+]
+
+
+def ehunt_stake(acc: dict, cfg: Config, tag: str) -> None:
+    """Один раз на аккаунт: купить случайно ehunt_min–ehunt_max EHUNT за HYPE и застейкать в Flexible.
+    Если покупка дороже ehunt_max_share % всех HYPE аккаунта (Elysium + HyperEVM) — пропуск."""
+    import random
+    from bridge import w3 as get_w3
+    from onchain import H, cs, ensure_allowance, erc20_balance
+    if not cfg.opt("hunt", "ehunt_stake", 0):
+        return
+    me = acc["address"]
+    st = contract(E, STAKING, STAKING_ABI, acc)
+    if call(st.functions.getUserPositionCount(me)) > 0:
+        log.info("%s: hunt: EHUNT уже застейкан — пропуск", tag)
+        return
+    min_stake = call(st.functions.minStakeAmount())
+    lo, hi = cfg.opt("hunt", "ehunt_min", 50.0), cfg.opt("hunt", "ehunt_max", 63.0)
+    want = max(int(round(random.uniform(lo, hi), random.randint(1, 4)) * 10**18), min_stake)
+    have = erc20_balance(E, EHUNT, me, acc)
+    if have < want:
+        r = contract(E, HUNT_ROUTER, ROUTER_ABI, acc)
+        path = [cs(HUNT_WHYPE), cs(EHUNT)]
+        need = want - have
+        cost = call(r.functions.getAmountsIn(need, path))[0]
+        value = int(cost * 1.03)  # запас на движение цены; лишнее роутер вернёт
+        bal_e = get_w3(E[0], acc).eth.get_balance(me)
+        try:
+            bal_h = get_w3(H[0], acc).eth.get_balance(me)
+        except Exception:
+            bal_h = 0
+        share = value / max(bal_e + bal_h, 1)
+        if share > cfg.opt("hunt", "ehunt_max_share", 30.0) / 100:
+            log.warning("%s: hunt: EHUNT пропущен — %s EHUNT стоят %s HYPE, это %.0f%% всех HYPE аккаунта "
+                        "(Elysium %s + HyperEVM %s), больше %s%%", tag, fmt(need), fmt(cost), share * 100,
+                        fmt(bal_e), fmt(bal_h), cfg.opt("hunt", "ehunt_max_share", 30.0))
+            return
+        if value + 10**16 > bal_e:
+            log.info("%s: hunt: EHUNT — на Elysium мало HYPE (%s, нужно ~%s), пропуск", tag, fmt(bal_e), fmt(value))
+            return
+        link = send_tx(E, acc, HUNT_ROUTER, r.encode_abi(
+            "swapETHForExactTokens", args=[need, path, me, int(time.time()) + 600]), value=value)
+        log.info("%s: hunt: куплено %s EHUNT за ~%s HYPE, %s", tag, fmt(need), fmt(cost), link)
+        pause(cfg)
+    amount = min(erc20_balance(E, EHUNT, me, acc), want)
+    if amount < min_stake:
+        log.info("%s: hunt: EHUNT %s — меньше минимума стейка %s", tag, fmt(amount), fmt(min_stake))
+        return
+    ensure_allowance(E, acc, EHUNT, STAKING, amount, tag, "hunt EHUNT")
+    link = send_tx(E, acc, STAKING, st.encode_abi("stake", args=[0, amount]))
+    log.info("%s: hunt: застейкано %s EHUNT (Flexible, без лока), %s", tag, fmt(amount), link)

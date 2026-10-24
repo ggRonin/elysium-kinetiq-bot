@@ -6,6 +6,7 @@ Kalos (чек-ин, награда KALOS, своп, минт NFT) → BunnyPad (
 """
 from __future__ import annotations
 
+import bridge
 import elyra
 import games
 import hl_faucet
@@ -21,6 +22,7 @@ from onchain import NoFunds, pause
 
 # (раздел config.ini, ключ включения, название в логе, функция)
 ACTIONS = [
+    ("bridge", "hyperevm_gather", "сбор HYPE в Elysium", bridge.gather_to_elysium),
     ("hl_faucet", "hl_faucet", "кран Hyperliquid", hl_faucet.run),
     ("elyra", "elyra", "фосет Elyra", elyra.faucet),
     ("wrap", "wrap", "wrap", wrap.run),
@@ -29,6 +31,7 @@ ACTIONS = [
     ("token_bridge", "tbridge", "бридж токенов", tbridge.run),
     ("ely", "ely", ".ely", names.run),
     ("hunt", "hunt", "Elysium Hunt", hunt.run),
+    ("hunt", "ehunt_stake", "EHUNT стейк", hunt.ehunt_stake),
     ("kalos", "kalos_checkin", "Kalos чек-ин", kalos.checkin),
     ("kalos", "kalos_claim", "Kalos награда", kalos.claim_rewards),
     ("kalos", "kalos_swap", "Kalos swap", kalos.swap),

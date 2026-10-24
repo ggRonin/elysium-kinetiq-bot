@@ -308,3 +308,19 @@ def run(acc: dict, cfg: Config, rounds: int | None = None, start: int = 0) -> in
         except Exception as e:
             log.warning("%s: бридж: депозиты не прошли: %s", tag, e)
     return len(ok)
+
+
+def gather_to_elysium(acc: dict, cfg: Config, tag: str) -> None:
+    """Перевести HYPE с HyperEVM в Elysium, оставив на HyperEVM hyperevm_keep (газ на клеймы и бридж обратно).
+    Все активности идут в Elysium, поэтому лишний HYPE на HyperEVM просто лежит."""
+    if not cfg.opt("bridge", "hyperevm_gather", 0):
+        return
+    keep = Web3.to_wei(cfg.opt("bridge", "hyperevm_keep", 0.02), "ether")
+    min_move = Web3.to_wei(cfg.opt("bridge", "hyperevm_gather_min", 0.01), "ether")
+    have = with_retry(w3(HYPEREVM_RPC, acc).eth.get_balance, acc["address"])
+    amount = have - keep
+    if amount < min_move:
+        return
+    h = send(HYPEREVM_RPC, HYPEREVM_CHAIN_ID, acc, INBOX, value=amount, data=_calldata("depositEth"))
+    log.info("%s: бридж: %s HYPE HyperEVM → Elysium (на HyperEVM оставлено %s), %s%s", tag, fmt(amount),
+             fmt(keep), HYPEREVM_TX, h)
