@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from curl_cffi import requests as http
 from web3 import Web3
 
-from common import load_accounts, load_config, log, short
+from common import ROOT, load_accounts, load_config, log, short
 
 ELYSIUM_RPC = "https://testnet-rpc.elysium.kinetiq.xyz"
 PROJECTS = ["Kalos", "BunnyPad", "Elyra", "ELYSA", "Hunt EXP"]
@@ -135,12 +135,25 @@ def elyra_mine(addr: str) -> float:
 
 
 # ── ELYSA ────────────────────────────────────────────────────────────────────
+ELYSA_CACHE = ROOT / "logs" / "elysa_db.json"  # адрес и публичный ключ их базы — на случай, если сайт недоступен
+
+
 def _elysa_db():
-    js = http.get("https://elysa.fun/config.js", impersonate="chrome136", timeout=30).text
-    m = re.search(r"POINTS\s*=\s*\{\s*url:\s*'([^']+)',\s*key:\s*'([^']+)'", js)
-    if not m:
-        raise RuntimeError("elysa: не нашёл адрес базы поинтов")
-    return m.group(1), {"apikey": m.group(2), "Authorization": "Bearer " + m.group(2)}
+    """Адрес базы поинтов ELYSA и её публичный (только чтение) ключ из elysa.fun/config.js.
+    Сайт бывает отключён хостингом (HTTP 402) — тогда берём из локального кэша, база при этом работает."""
+    import json
+    try:
+        js = http.get("https://elysa.fun/config.js", impersonate="chrome136", timeout=30).text
+        m = re.search(r"POINTS\s*=\s*\{\s*url:\s*'([^']+)',\s*key:\s*'([^']+)'", js)
+        if m:
+            ELYSA_CACHE.parent.mkdir(exist_ok=True)
+            ELYSA_CACHE.write_text(json.dumps({"url": m.group(1), "key": m.group(2)}), encoding="utf-8")
+    except Exception:
+        pass
+    if not ELYSA_CACHE.exists():
+        raise RuntimeError("elysa: сайт недоступен, а адреса базы поинтов в кэше нет")
+    c = json.loads(ELYSA_CACHE.read_text(encoding="utf-8"))
+    return c["url"], {"apikey": c["key"], "Authorization": "Bearer " + c["key"]}
 
 
 def elysa_board(addrs: list[str]) -> tuple[float | None, dict[str, float]]:
@@ -161,11 +174,32 @@ def hunt_top10() -> float | None:
     return float(ten[0]["exp"]) if ten else None
 
 
+_HUNT_ABI = [
+    {"type": "function", "name": "userExp", "stateMutability": "view", "inputs": [{"name": "a", "type": "address"}],
+     "outputs": [{"type": "uint256"}]},
+    {"type": "function", "name": "balanceOf", "stateMutability": "view", "inputs": [{"name": "a", "type": "address"}],
+     "outputs": [{"type": "uint256"}]},
+    {"type": "function", "name": "bountyHunterOfOwnerByIndex", "stateMutability": "view",
+     "inputs": [{"name": "o", "type": "address"}, {"name": "i", "type": "uint256"}], "outputs": [{"type": "uint256"}]},
+    {"type": "function", "name": "getBountyHunter", "stateMutability": "view", "inputs": [{"name": "id", "type": "uint256"}],
+     "outputs": [{"type": "tuple", "components": [
+         {"name": "rank", "type": "uint8"}, {"name": "lastHarvestTimestamp", "type": "uint256"},
+         {"name": "lastUpgradeTimestamp", "type": "uint256"}, {"name": "isEligibleForUpgrade", "type": "bool"},
+         {"name": "isUpgrading", "type": "bool"}, {"name": "isTransferred", "type": "bool"},
+         {"name": "hasWithdrawn", "type": "bool"}]}]},
+]
+_HUNT_CARD_EXP = {1: 100, 2: 400, 3: 1200, 4: 4000}  # как на сайте: EXP за карту = 150 + бонус её уровня
+
+
 def hunt_mine(addr: str) -> float:
-    c = _w3().eth.contract(address=HUNT_CORE, abi=[{"type": "function", "name": "userExp", "stateMutability": "view",
-                                                    "inputs": [{"name": "a", "type": "address"}],
-                                                    "outputs": [{"type": "uint256"}]}])
-    return float(c.functions.userExp(addr).call())
+    """EXP как на elysium.archuntx.site: userExp из контракта + по каждой карте (150 + бонус уровня)."""
+    c = _w3().eth.contract(address=HUNT_CORE, abi=_HUNT_ABI)
+    total = c.functions.userExp(addr).call()
+    for i in range(c.functions.balanceOf(addr).call()):
+        card = c.functions.bountyHunterOfOwnerByIndex(addr, i).call()
+        rank = c.functions.getBountyHunter(card).call()[0]
+        total += 150 + _HUNT_CARD_EXP.get(rank, 100)
+    return float(total)
 
 
 # ── сборка и печать ──────────────────────────────────────────────────────────
