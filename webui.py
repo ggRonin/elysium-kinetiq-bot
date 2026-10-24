@@ -116,7 +116,7 @@ LABELS = {
     "bunnypad.bunny_launch": "Запуск своего токена",
     "perpme.perpme": "Покупка", "perpme.buy_min": "Сумма от, HYPE", "perpme.buy_max": "Сумма до, HYPE",
     "games.elysa": "ELYSA.FUN", "games.elysa_bet": "Ставка ELYSA, HYPE", "games.frogflip": "Frog Flip",
-    "games.frog_min": "Ставка Frog от, HYPE", "games.frog_max": "Ставка Frog до, HYPE",
+    "games.frog_name": "Ник в Frog Flip", "games.frog_min": "Ставка Frog от, HYPE", "games.frog_max": "Ставка Frog до, HYPE",
     "hl_faucet.hl_faucet": "Кран Hyperliquid", "hl_faucet.keep_usdc": "Оставлять USDC на споте",
     "points.points": "Таблица поинтов", "points.points_first_minutes": "Первая таблица через, мин",
     "points.points_every_hours": "Дальше каждые, ч",

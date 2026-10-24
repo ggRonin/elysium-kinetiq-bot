@@ -37,6 +37,7 @@ ACTIONS = [
     ("bunnypad", "bunnypad", "BunnyPad", launchpads.bunnypad),
     ("perpme", "perpme", "PerpMe", launchpads.perpme),
     ("games", "elysa", "ELYSA.FUN", games.elysa),
+    ("games", "frog_name", "Frog Flip ник", games.frog_name),
     ("games", "frogflip", "Frog Flip", games.frogflip),
 ]
 
