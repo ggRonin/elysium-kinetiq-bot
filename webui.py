@@ -21,7 +21,7 @@ from aiohttp import web
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = ROOT / "config.ini"
-FILES = {"accounts": ROOT / "accounts.txt", "proxy": ROOT / "Proxy.txt"}
+FILES = {"accounts": ROOT / "accounts.txt", "proxy": ROOT / "Proxy.txt", "x": ROOT / "x_handles.txt"}
 ENV = ROOT / ".env"
 PAGE = ROOT / "webui" / "index.html"
 PY = sys.executable
@@ -71,7 +71,7 @@ CARDS = [
      "desc": "Одна ставка в монетку в день. ELYSA: 666 поинтов за 1 HYPE ставки + бонус серии.",
      "links": [["ELYSA.FUN", "https://elysa.fun"], ["Поинты ELYSA", "https://elysa.fun/leaderboard.html"],
                ["Frog Flip", "https://frogflip.xyz"]]},
-    {"id": "hunt", "only": "hunt", "title": "Elysium Hunt — квесты (EXP)", "sections": ["hunt"], "desc": "Ежедневный чек-ин +100 EXP.",
+    {"id": "hunt", "only": "hunt", "title": "Elysium Hunt — квесты (EXP)", "sections": ["hunt"], "desc": "Чек-ин +100 EXP, квест-транзакция +250, квест X +1000 (ники — в блоке аккаунтов), апгрейд карт.",
      "links": [["Elysium Hunt", "https://elysium.archuntx.site"]]},
     {"id": "ely", "only": "ely", "title": ".ely — домены", "sections": ["ely"], "desc": "Один домен на аккаунт, 0.1 HYPE.",
      "links": [[".ely names", "https://elysiumnameservice.xyz"]]},
@@ -111,6 +111,9 @@ LABELS = {
     "token_bridge.tbridge_buy": "Докупать токен",
     "ely.ely": "Регистрация домена", "ely.ely_max_price": "Макс. цена, HYPE",
     "hunt.hunt": "Квесты", "hunt.hunt_mint": "Минт карты", "hunt.hunt_max_price": "Макс. цена карты, HYPE",
+    "hunt.hunt_upgrade": "Апгрейд карт", "hunt.hunt_upgrade_to": "Качать до уровня",
+    "hunt.hunt_upgrade_max_fee": "Макс. цена попытки, HYPE", "hunt.hunt_upgrade_tries": "Попыток на карту",
+    "hunt.hunt_x_quest": "Квест X (Follow @archuntx)",
     "hyperevm_gas.donor": "Донор (номер строки аккаунта)", "hyperevm_gas.topup": "Докинуть до, HYPE",
     "hyperevm_gas.topup_below": "Если на HyperEVM меньше, HYPE", "hyperevm_gas.big_withdraw": "Крупный вывод из Elysium, HYPE",
     "hyperevm_faucet.min_balance": "Клеймить, если на HyperEVM меньше, HYPE", "hyperevm_faucet.threads": "Потоков",

@@ -132,3 +132,17 @@ def set_account_proxy(n: int, proxy: str) -> None:
     mnemonic = lines[n - 1].partition(",")[0].strip()
     lines[n - 1] = f"{mnemonic},{proxy}"
     _write_lines(ACCOUNTS_FILE, lines)
+
+
+X_FILE = ROOT / "x_handles.txt"  # X-ники: по одному в строке, в том же порядке, что аккаунты в accounts.txt
+
+
+def x_handle(acc: dict) -> str | None:
+    """X-ник аккаунта: k-я строка x_handles.txt (без пустых и #) — для k-го аккаунта."""
+    if not X_FILE.exists():
+        return None
+    handles = [ln.strip().lstrip("@") for ln in X_FILE.read_text(encoding="utf-8-sig").splitlines()
+               if ln.strip() and not ln.strip().startswith("#")]
+    order = [a["n"] for a in load_accounts()]
+    i = order.index(acc["n"]) if acc["n"] in order else -1
+    return handles[i] if 0 <= i < len(handles) else None

@@ -1,0 +1,3 @@
+# Скопируй в x_handles.txt. X-ники по одному в строке, в том же порядке, что аккаунты в accounts.txt
+myhandle1
+myhandle2

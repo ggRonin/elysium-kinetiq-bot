@@ -2,6 +2,7 @@
 .env
 accounts.txt
 Proxy.txt
+x_handles.txt
 *.tmp
 logs/
 
