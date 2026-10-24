@@ -317,10 +317,20 @@ def gather_to_elysium(acc: dict, cfg: Config, tag: str) -> None:
         return
     keep = Web3.to_wei(cfg.opt("bridge", "hyperevm_keep", 0.02), "ether")
     min_move = Web3.to_wei(cfg.opt("bridge", "hyperevm_gather_min", 0.01), "ether")
+    time.sleep(random.uniform(0, 20))  # все потоки стартуют с этого действия — разнести запросы к RPC HyperEVM
     have = with_retry(w3(HYPEREVM_RPC, acc).eth.get_balance, acc["address"])
     amount = have - keep
     if amount < min_move:
         return
-    h = send(HYPEREVM_RPC, HYPEREVM_CHAIN_ID, acc, INBOX, value=amount, data=_calldata("depositEth"))
+    for attempt in range(6):  # публичный RPC HyperEVM отвечает «rate limited» — подождать и повторить
+        try:
+            h = send(HYPEREVM_RPC, HYPEREVM_CHAIN_ID, acc, INBOX, value=amount, data=_calldata("depositEth"))
+            break
+        except NoFunds:
+            raise
+        except Exception as e:
+            if not rate_limited(e) or attempt == 5:
+                raise
+            time.sleep(random.uniform(3, 10))
     log.info("%s: бридж: %s HYPE HyperEVM → Elysium (на HyperEVM оставлено %s), %s%s", tag, fmt(amount),
              fmt(keep), HYPEREVM_TX, h)
