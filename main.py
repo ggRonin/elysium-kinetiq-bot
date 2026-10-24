@@ -129,9 +129,13 @@ async def points_loop(accounts: list[dict], cfg: Config) -> None:
 async def main() -> None:
     ap = argparse.ArgumentParser(description="Elysium testnet: фосет + бридж")
     ap.add_argument("--limit", type=int, default=None, help="только первые N аккаунтов")
+    ap.add_argument("--only", default=None,
+                    help="только один проект (раздел config.ini: faucet, bridge, kalos, elyra, …), один проход")
     args = ap.parse_args()
 
     cfg = load_config()
+    if args.only:
+        only_mode(cfg, args.only)
     load_dotenv(ROOT / ".env")
     api_key = os.getenv("CAPSOLVER_API_KEY", "").strip()
     if cfg.claim and not api_key:
@@ -159,6 +163,31 @@ async def main() -> None:
     for acc, res in zip(accounts, results):
         if isinstance(res, Exception):
             log.error("#%d: необработанная ошибка: %r", acc["n"], res)
+    if args.only:
+        log.info("«%s»: проход по всем аккаунтам завершён", args.only)
+
+
+def only_mode(cfg: Config, only: str) -> None:
+    """Запуск одного проекта: один проход, всё остальное (фосет, бридж, другие проекты, поинты) выключено.
+    Настройки самого проекта берутся из config.ini как есть."""
+    groups = {"faucet", "bridge"} | {sec for sec, _, _, _ in activities.ACTIONS}
+    if only not in groups:
+        sys.exit(f"--only {only}: нет такого проекта. Есть: {', '.join(sorted(groups))}")
+    cfg.loop = False
+    if only != "faucet":
+        cfg.claim = False
+    if only != "bridge":
+        cfg.bridge = 0
+    for sec, key, _, _ in activities.ACTIONS:
+        if sec != only:
+            cfg.ini.set(sec, key, "0")
+    if cfg.ini.has_section("points"):
+        cfg.ini.set("points", "points", "0")
+    enabled = {"faucet": cfg.claim, "bridge": cfg.bridge}.get(
+        only, any(cfg.opt(s, k, 0) for s, k, _, _ in activities.ACTIONS if s == only))
+    if not enabled:
+        sys.exit(f"«{only}»: в настройках проекта всё выключено — включи нужное в его карточке и запусти снова")
+    log.info("режим: только «%s», один проход по всем аккаунтам", only)
 
 
 if __name__ == "__main__":

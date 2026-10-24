@@ -45,6 +45,12 @@
   .card { break-inside: avoid; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
     padding: 14px 16px; margin: 0 0 14px; }
   .card h2 { font-size: 15px; margin: 0; }
+  .card-head { display: flex; align-items: flex-start; gap: 10px; }
+  .card-head h2 { flex: 1; padding-top: 4px; }
+  .only { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .only button { padding: 5px 11px; font-size: 12.5px; background: #12302a; border-color: #2b5a49; color: var(--accent); white-space: nowrap; }
+  .only button:hover:not(:disabled) { background: #173a32; }
+  .only small { color: var(--muted); font-size: 11px; text-align: right; }
   .card .desc { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
   .links { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
   .links a { font-size: 12.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid #23415a; background: #0f1d28; }
@@ -176,7 +182,10 @@ function render() {
         `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)} ↗</a>`).join("")}</div>` : "";
     const scripts = (c.scripts || []).length ? `<div class="scripts">${c.scripts.map(([id, t]) =>
         `<button class="small" data-run="${id}">${esc(t)}</button>`).join("")}</div>` : "";
-    return `<div class="card" id="card-${c.id}"><h2>${esc(c.title)}</h2><div class="desc">${esc(c.desc || "")}</div>
+    const only = c.only ? `<div class="only"><button data-run="only:${c.only}" data-only="1">▶ Запустить отдельно</button>
+        <small>только этот проект, один проход</small></div>` : "";
+    return `<div class="card" id="card-${c.id}"><div class="card-head"><h2>${esc(c.title)}</h2>${only}</div>
+      <div class="desc">${esc(c.desc || "")}</div>
       ${links}${env}${secs}${scripts}</div>`;
   }).join("");
   $("#cards").innerHTML = acc + cards;
@@ -218,8 +227,12 @@ async function runScript(id) {
 function setStatus(st) {
   const m = st.main, t = st.tool;
   $("#st-main").classList.toggle("on", m.running);
-  $("#st-main span:last-child").textContent = m.running ? "бот работает" : "бот остановлен";
+  const onlyCard = m.running && m.script && m.script.startsWith("only:")
+    ? state.cards.find(c => "only:" + c.only === m.script) : null;
+  $("#st-main span:last-child").textContent = !m.running ? "бот остановлен"
+    : onlyCard ? "работает: только " + onlyCard.title : "бот работает";
   $("#btn-start").disabled = m.running;
+  document.querySelectorAll("[data-only]").forEach(b => (b.disabled = m.running));
   $("#btn-stop").disabled = !m.running;
   $("#st-tool").style.display = t.running ? "inline-flex" : "none";
   $("#st-tool").classList.toggle("on", t.running);
