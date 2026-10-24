@@ -99,7 +99,7 @@ LABELS = {
     "swap.swap": "Режим", "swap.swap_min": "Сумма от, HYPE", "swap.swap_max": "Сумма до, HYPE", "swap.swap_rounds": "Повторов в день",
     "elyra.elyra": "Elyra", "elyra.elyra_faucet": "Фосет Elyra", "elyra.supply_hype_min": "Депозит HYPE от",
     "elyra.supply_hype_max": "Депозит HYPE до", "elyra.supply_usdc_share": "Доля USDC в депозит, %",
-    "elyra.elyra_borrow": "Займ", "elyra.collateral_min": "Залог HYPE от", "elyra.collateral_max": "Залог HYPE до",
+    "elyra.elyra_collateral": "ELYRA в залог", "elyra.elyra_borrow": "Займ", "elyra.collateral_min": "Залог HYPE от", "elyra.collateral_max": "Залог HYPE до",
     "elyra.borrow_share": "Займ от лимита, %",
     "token_bridge.tbridge": "Режим", "token_bridge.token": "Токен", "token_bridge.tbridge_min": "Сумма от (в токене)",
     "token_bridge.tbridge_max": "Сумма до (в токене)", "token_bridge.tbridge_rounds": "Выводов в день",

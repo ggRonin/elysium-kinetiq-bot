@@ -6,7 +6,8 @@ run():
   1. разрешение hypeGateway в пуле (один раз; без него депозиты HYPE отклоняются: Unauthorized);
   2. депозит HYPE в рынок, где занимают WHYPE (supplyHYPE);
   3. депозит части USDC в рынок, где занимают USDC (supply);
-  4. по желанию: залог HYPE + небольшой займ USDC (elyra_borrow = 1).
+  4. весь ELYRA с фосета — залогом в рынок ELYRA → USDC без займа (elyra_collateral = 1);
+  5. по желанию: залог HYPE + небольшой займ USDC (elyra_borrow = 1).
 Позиции не закрываются — поинты идут, пока они открыты.
 """
 from __future__ import annotations
@@ -30,6 +31,11 @@ LLTV_CORE = 0xaaf96eb9d0d0000  # 77%
 # MarketParams: (loanToken, collateralToken, oracle, irm, lltv)
 MARKET_WHYPE_LOAN = (cs(WHYPE), cs(USDC), cs("0x84c682039310e88913ea37232cf55b186a2808e1"), cs(ADAPTIVE_IRM), LLTV_CORE)
 MARKET_USDC_LOAN = (cs(USDC), cs(WHYPE), cs("0xc7927d427089c7f3c3db9a4464aa159cbc96525f"), cs(ADAPTIVE_IRM), LLTV_CORE)
+# рынок «залог ELYRA → займ USDC» (frontier): kink-ставка, ликвидация при 38.5%; без займа ликвидации нет
+KINK_IRM = "0x03c02eb7029e2064a10d82234d97027f121fb3dd"
+LLTV_FRONTIER = 0x557cb75ce868000  # 38.5%
+MARKET_ELYRA_COLLATERAL = (cs(USDC), cs(ELYRA), cs("0x9f23d0c9d802c05baa3deb3e912280972bb46de4"), cs(KINK_IRM),
+                           LLTV_FRONTIER)
 
 _MP = {"name": "params", "type": "tuple", "components": [
     {"name": "loanToken", "type": "address"}, {"name": "collateralToken", "type": "address"},
@@ -42,6 +48,8 @@ POOL_ABI = [
      "outputs": [{"type": "bool"}]},
     {"type": "function", "name": "setAuthorization", "stateMutability": "nonpayable",
      "inputs": [_A("authorized"), {"name": "allowed", "type": "bool"}], "outputs": []},
+    {"type": "function", "name": "supplyCollateral", "stateMutability": "nonpayable",
+     "inputs": [_MP, _U("assets"), _A("onBehalf"), {"name": "data", "type": "bytes"}], "outputs": []},
     {"type": "function", "name": "supply", "stateMutability": "nonpayable",
      "inputs": [_MP, _U("assets"), _U("shares"), _A("onBehalf"), {"name": "data", "type": "bytes"}],
      "outputs": [{"type": "uint256"}, {"type": "uint256"}]},
@@ -115,6 +123,16 @@ def run(acc: dict, cfg: Config, tag: str) -> None:
         link = send_tx(E, acc, POOL, pool.encode_abi("supply", args=[MARKET_USDC_LOAN, usdc, 0, me, b""]))
         log.info("%s: elyra: депозит %s USDC (рынок займа USDC), %s", tag, fmt_units(usdc, 6), link)
         pause(cfg)
+
+    if cfg.opt("elyra", "elyra_collateral", 1):
+        # весь ELYRA с фосета — залогом в рынок ELYRA → USDC, без займа: поинты ×1.5 (ELYRA по оракулу $0.10)
+        elyra_bal = erc20_balance(E, ELYRA, me, acc)
+        if elyra_bal >= 10**18:  # от 1 ELYRA
+            ensure_allowance(E, acc, ELYRA, POOL, elyra_bal, tag, "elyra")
+            link = send_tx(E, acc, POOL, pool.encode_abi(
+                "supplyCollateral", args=[MARKET_ELYRA_COLLATERAL, elyra_bal, me, b""]))
+            log.info("%s: elyra: залог %s ELYRA (без займа), %s", tag, fmt(elyra_bal), link)
+            pause(cfg)
 
     if not cfg.opt("elyra", "elyra_borrow", 0):
         return
