@@ -46,7 +46,7 @@ def main() -> None:
         _give_gas(accounts, donor, bal_h, topup, below, args.dry)
     except NoFunds as e:
         log.error("донор: HYPE на HyperEVM кончился (%s) — раздача остановлена", e)
-    _big_withdrawals(accounts, bal_h, big, args.dry)
+    _big_withdrawals(accounts, bal_h, big, below, args.dry)
 
 
 def _give_gas(accounts, donor, bal_h, topup, below, dry) -> None:
@@ -74,7 +74,7 @@ def _give_gas(accounts, donor, bal_h, topup, below, dry) -> None:
         log.info("%s: газ от донора %s HYPE на HyperEVM, %s", tag, fmt(need), link)
 
 
-def _big_withdrawals(accounts, bal_h, big, dry) -> None:
+def _big_withdrawals(accounts, bal_h, big, below, dry) -> None:
     """Крупный вывод из Elysium тем, у кого на HyperEVM мало и такой вывод ещё не в пути."""
     e3 = bridge.w3(E[0])
     abi = [{"type": "function", "name": "withdrawEth", "stateMutability": "payable",
@@ -82,7 +82,7 @@ def _big_withdrawals(accounts, bal_h, big, dry) -> None:
     arbsys = e3.eth.contract(address=bridge.ARB_SYS, abi=abi)
     for a in accounts:
         tag = f"#{a['n']} {short(a['address'])}"
-        if bal_h[a["address"]] >= big // 2:
+        if bal_h[a["address"]] >= below:  # газ на HyperEVM есть (сбор HYPE оставляет там hyperevm_keep)
             continue
         try:
             pend = bridge.pending(a["address"], a)["withdrawals"]
