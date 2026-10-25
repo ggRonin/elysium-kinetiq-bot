@@ -299,6 +299,7 @@ CAPSOLVER_API_KEY=CAP-xxxxxxxxxxxxxxxx
 | `.venv\Scripts\python.exe hl_faucet.py` | кран Hyperliquid → покупка HYPE → перевод в HyperEVM |
 | `.venv\Scripts\python.exe hyperevm_gas.py --dry` | показать, кому и сколько газа раздаст донор, ничего не отправляя |
 | `.venv\Scripts\python.exe hyperevm_gas.py` | раздать газ и сделать крупные выводы |
+| `.venv\Scripts\python.exe gather_hype.py` | собрать HYPE с HyperEVM в Elysium на всех аккаунтах (на HyperEVM остаётся 0.02 на газ) |
 | `.venv\Scripts\python.exe alchemy_faucet.py` | кран Alchemy для аккаунтов с низким балансом на HyperEVM |
 
 ---

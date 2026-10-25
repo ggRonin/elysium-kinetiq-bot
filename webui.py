@@ -34,6 +34,7 @@ SCRIPTS = {
     "hyperevm_gas": ("hyperevm_gas.py", [], "tool"),
     "hyperevm_gas_dry": ("hyperevm_gas.py", ["--dry"], "tool"),
     "alchemy_faucet": ("alchemy_faucet.py", [], "tool"),
+    "gather_hype": ("gather_hype.py", [], "tool"),
 }
 
 # карточки панели: разделы config.ini, ссылки, описание, кнопки скриптов
@@ -46,7 +47,8 @@ CARDS = [
      "links": [["Фосет", "https://elysium.kinetiq.xyz/testnet-faucet"], ["CapSolver", "https://dashboard.capsolver.com"]]},
     {"id": "bridge", "only": "bridge", "title": "Бридж HYPE Elysium ↔ HyperEVM", "sections": ["bridge"],
      "desc": "Круги вывода в HyperEVM и депозита обратно; клейм подтверждённых выводов.",
-     "links": [["Бридж", "https://elysium.kinetiq.xyz/testnet-bridge"]]},
+     "links": [["Бридж", "https://elysium.kinetiq.xyz/testnet-bridge"]],
+     "scripts": [["gather_hype", "Собрать HYPE с HyperEVM в Elysium"]]},
     {"id": "token_bridge", "only": "token_bridge", "title": "Бридж токенов (USDC / WHYPE)", "sections": ["token_bridge"],
      "desc": "Canonical-бридж ERC-20 между Elysium и HyperEVM.",
      "links": [["Бридж", "https://elysium.kinetiq.xyz/testnet-bridge"],
