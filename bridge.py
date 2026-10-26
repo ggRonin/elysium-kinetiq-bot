@@ -69,9 +69,11 @@ def w3(rpc: str, acc: dict | None = None) -> Web3:
 
 
 def rate_limited(e: Exception) -> bool:
-    """Лимит Conduit: приходит и как JSON-ошибка -32017, и как HTTP 429."""
+    """Временный сбой RPC — стоит подождать и повторить: лимит (Conduit -32017, HyperEVM -32005, HTTP 429)
+    и отставание нод за балансировщиком («invalid block height», «header not found»)."""
     t = str(e).lower()
-    return "rate limit" in t or "-32017" in t or "429" in t or "too many requests" in t
+    return ("rate limit" in t or "-32017" in t or "-32005" in t or "429" in t or "too many requests" in t
+            or "invalid block height" in t or "header not found" in t)
 
 
 def with_retry(fn, *args, tries: int = 40, **kw):
@@ -171,21 +173,24 @@ def claim_confirmed(acc: dict, tag: str, min_hype: float = 0.0) -> None:
             log.warning("%s: бридж: клейм %s ведёт на незнакомый Outbox, пропускаю", tag, wd.get("id"))
             continue
         try:
-            for attempt in range(6):  # публичный RPC HyperEVM отвечает «rate limited» — подождать и повторить
+            for attempt in range(10):  # публичный RPC HyperEVM отвечает «rate limited» — подождать и повторить
                 try:
                     h = send(HYPEREVM_RPC, HYPEREVM_CHAIN_ID, acc, OUTBOX, data=claim["calldata"])
                     break
                 except NoFunds:
                     raise
                 except Exception as e:
-                    if not rate_limited(e) or attempt == 5:
+                    if not rate_limited(e) or attempt == 9:
                         raise
-                    time.sleep(random.uniform(3, 8))
+                    time.sleep(random.uniform(5, 20))
         except NoFunds as e:
             log.warning("%s: бридж: %d вывод(ов) готовы к клейму, но на HyperEVM нет HYPE на газ (%s)", tag, len(ready), e)
             return
         except Exception as e:
-            log.warning("%s: бридж: клейм %s не прошёл: %s", tag, what, e)
+            if "0x9715b8d3" in str(e):  # AlreadySpent: вывод уже получен, сайт Elysium показывает с задержкой
+                log.info("%s: бридж: %s уже получен раньше", tag, what)
+            else:
+                log.warning("%s: бридж: клейм %s не прошёл: %s", tag, what, e)
             continue
         log.info("%s: бридж: клейм %s на HyperEVM, %s%s", tag, what, HYPEREVM_TX, h)
 

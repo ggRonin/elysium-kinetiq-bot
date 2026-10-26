@@ -336,7 +336,7 @@ def ehunt_stake(acc: dict, cfg: Config, tag: str) -> None:
             bal_h = 0
         share = value / max(bal_e + bal_h, 1)
         if share > cfg.opt("hunt", "ehunt_max_share", 30.0) / 100:
-            log.warning("%s: hunt: EHUNT пропущен — %s EHUNT стоят %s HYPE, это %.0f%% всех HYPE аккаунта "
+            log.info("%s: hunt: EHUNT пропущен — %s EHUNT стоят %s HYPE, это %.0f%% всех HYPE аккаунта "
                         "(Elysium %s + HyperEVM %s), больше %s%%", tag, fmt(need), fmt(cost), share * 100,
                         fmt(bal_e), fmt(bal_h), cfg.opt("hunt", "ehunt_max_share", 30.0))
             return

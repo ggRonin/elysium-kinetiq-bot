@@ -166,7 +166,13 @@ def perpme(acc: dict, cfg: Config, tag: str) -> None:
             log.debug("%s: perpme: %s не покупается: %s", tag, token, e)
             continue
         params = params[:6] + (int(out * (1 - slip)), 0)
-        link = send_tx(E, acc, PERP_ROUTER, r.encode_abi("exactInputSingle", args=[params]), value=amt)
+        try:
+            link = send_tx(E, acc, PERP_ROUTER, r.encode_abi("exactInputSingle", args=[params]), value=amt)
+        except Exception as e:
+            if "отклонена" in str(e) or "too little received" in str(e).lower():  # цену сдвинули другие покупки
+                log.info("%s: perpme: цена %s ушла, пробую другой токен", tag, token)
+                continue
+            raise
         log.info("%s: perpme: купил токен %s за %s HYPE, %s", tag, token, fmt(amt), link)
         return
     log.info("%s: perpme: не нашёл токен, который сейчас можно купить", tag)

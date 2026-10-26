@@ -67,23 +67,54 @@ REWARDS_ABI = [
 ]
 
 
-def _session(acc: dict):
-    """Вход в Kalos по подписи (Sign-In with Ethereum): nonce → подпись → токен сессии. Через прокси аккаунта."""
+class KalosBusy(RuntimeError):
+    """API Kalos временно не отвечает (500, «API is busy», «updating Points») — стоит повторить позже."""
+
+
+def _busy(status: int, body) -> bool:
+    text = str(body).lower()
+    return status >= 500 or any(k in text for k in ("internal", "busy", "unavailable", "admission", "publishing"))
+
+
+def _session_once(acc: dict, proxy):
     from curl_cffi import requests as http
     from eth_account import Account
     from eth_account.messages import encode_defunct
-    s = http.Session(impersonate="chrome136", proxy=acc.get("proxy"), timeout=30)
+    s = http.Session(impersonate="chrome136", proxy=proxy, timeout=30)
     s.headers.update({"Origin": SITE, "Referer": SITE + "/rewards", "Accept": "application/json"})
-    msg = s.post(API + "/v2/auth/nonce", json={"address": acc["address"]}).json()["message"]
+    r = s.post(API + "/v2/auth/nonce", json={"address": acc["address"]})
+    msg = (r.json() if r.content else {}).get("message")
+    if not isinstance(msg, str):
+        raise KalosBusy(f"nonce: HTTP {r.status_code} {r.text[:150]}")
     lines = msg.split("\n")
-    if lines[1].lower() != acc["address"].lower() or "Chain ID: 99801" not in lines:  # подписываем только вход в Kalos
-        raise RuntimeError("Kalos прислал неожиданное сообщение для подписи")
+    if len(lines) < 2 or lines[1].lower() != acc["address"].lower() or "Chain ID: 99801" not in lines:
+        raise RuntimeError("Kalos прислал неожиданное сообщение для подписи")  # подписываем только вход в Kalos
     sig = Account.sign_message(encode_defunct(text=msg), acc["key"]).signature.hex()
-    r = s.post(API + "/v2/auth/verify", json={"message": msg, "signature": "0x" + sig.removeprefix("0x")}).json()
-    if "token" not in r:
-        raise RuntimeError(f"вход в Kalos не удался: {r}")
-    s.headers["Authorization"] = "Bearer " + r["token"]
+    r = s.post(API + "/v2/auth/verify", json={"message": msg, "signature": "0x" + sig.removeprefix("0x")})
+    d = r.json() if r.content else {}
+    if "token" not in d:
+        raise (KalosBusy if _busy(r.status_code, d) else RuntimeError)(f"вход в Kalos не удался: {d}")
+    s.headers["Authorization"] = "Bearer " + d["token"]
     return s
+
+
+def _session(acc: dict):
+    """Вход в Kalos по подписи (Sign-In with Ethereum): nonce → подпись → токен сессии.
+    Через прокси аккаунта; прокси не отвечает — напрямую; API занят — повтор с паузой."""
+    last = None
+    for attempt in range(5):
+        for proxy in dict.fromkeys([acc.get("proxy"), None]):
+            try:
+                return _session_once(acc, proxy)
+            except KalosBusy as e:
+                last = e
+                break  # API занят — прокси ни при чём, ждём
+            except Exception as e:
+                last = e
+                if "curl" not in str(e).lower():
+                    raise
+        time.sleep(random.uniform(10, 30))
+    raise last
 
 
 def checkin(acc: dict, cfg: Config, tag: str) -> None:
@@ -95,10 +126,14 @@ def checkin(acc: dict, cfg: Config, tag: str) -> None:
     if st.get("checkedIn"):
         log.info("%s: kalos: чек-ин сегодня уже был (серия %s дн.)", tag, st.get("streak"))
         return
-    r = s.post(API + "/v2/points/checkin", json={})
-    d = r.json()
-    if r.status_code >= 300 or not d.get("checkedIn"):
-        raise RuntimeError(f"чек-ин не прошёл: HTTP {r.status_code} {str(d)[:200]}")
+    for attempt in range(5):
+        r = s.post(API + "/v2/points/checkin", json={})
+        d = r.json() if r.content else {}
+        if r.status_code < 300 and d.get("checkedIn"):
+            break
+        if not _busy(r.status_code, d) or attempt == 4:
+            raise RuntimeError(f"чек-ин не прошёл: HTTP {r.status_code} {str(d)[:200]}")
+        time.sleep(random.uniform(15, 45))  # Kalos публикует поинты / перегружен — подождать
     pool = d.get("pool") or {}
     log.info("%s: kalos: чек-ин, серия %s дн. (пул дня %s поинтов на %s чел.)", tag, d.get("streak"),
              pool.get("points"), pool.get("checkIns"))
@@ -240,8 +275,10 @@ def market(acc: dict, cfg: Config, tag: str) -> None:
             if int(lt["expiration"]) > now + 600 and int(lt["price"]) <= max_price
             and standard.get(lt["slug"]) == "ERC721" and lt["seller"].lower() not in ours]
     lots.sort(key=lambda lt: int(lt["price"]))
+    lots = lots[:40]
+    random.shuffle(lots)  # аккаунты не бьются за один и тот же самый дешёвый лот (NotListed после чужой покупки)
     mk = contract(E, MARKETPLACE, MARKET_ABI, acc)
-    for lot in lots[:15]:
+    for lot in lots:
         price, nft, token = int(lot["price"]), cs(lot["nft"]), int(lot["tokenId"])
         params = [(nft, token, cs(lot["seller"]), 1, price, cs(lot["paymentToken"]), True)]
         try:
@@ -249,7 +286,13 @@ def market(acc: dict, cfg: Config, tag: str) -> None:
         except Exception as e:
             log.debug("%s: kalos market: лот %s #%s недоступен: %s", tag, lot["slug"], token, e)
             continue
-        link = send_tx(E, acc, MARKETPLACE, mk.encode_abi("buyItems", args=[params]), value=price)
+        try:
+            link = send_tx(E, acc, MARKETPLACE, mk.encode_abi("buyItems", args=[params]), value=price)
+        except Exception as e:
+            if "отклонена" in str(e) or "0x665c1c57" in str(e):  # лот купили раньше нас — берём другой
+                log.info("%s: kalos: лот %s #%s успели купить раньше — пробую другой", tag, lot["slug"], token)
+                continue
+            raise
         log.info("%s: kalos: куплен NFT %s #%s за %s HYPE, %s", tag, lot["slug"], token, fmt(price), link)
         pause(cfg)
         c = contract(E, nft, NFT721_ABI, acc)
