@@ -5,8 +5,10 @@ RPC, лимиты Conduit и прокси берутся из bridge.py (w3, wit
 from __future__ import annotations
 
 import random
+import threading
 import time
 
+import requests
 from web3 import Web3
 
 from bridge import (ELYSIUM_CHAIN_ID, ELYSIUM_RPC, ELYSIUM_TX, HYPEREVM_CHAIN_ID, HYPEREVM_RPC, HYPEREVM_TX,
@@ -105,28 +107,78 @@ def fmt_units(v: int, decimals: int) -> str:
     return f"{v / 10**decimals:.6f}".rstrip("0").rstrip(".") or "0"
 
 
-EXPLORER_API = "https://elysium.kinetiq.xyz/api/v2"
+_CALLS_CACHE: dict = {}
+_CALLS_LOCK = threading.Lock()
+CALLS_TTL = 600  # с, одна выборка на все потоки
 
 
-def recent_calls(addr: str, method: str, pages: int = 2) -> list[dict]:
-    """Свежие успешные вызовы method у контракта addr по API эксплорера (Blockscout).
-    Возвращает [{"params": {имя: значение}, "value": int, "from": адрес}] — по ним бот находит
-    живые токены и дропы (мемтокены и NFT-дропы меняются каждый день)."""
-    from curl_cffi import requests as http
-    out, url, params = [], f"{EXPLORER_API}/addresses/{cs(addr)}/transactions", {"filter": "to"}
-    for _ in range(pages):
-        d = http.get(url, params=params, impersonate="chrome136", timeout=40).json()
-        for t in d.get("items", []):
-            di = t.get("decoded_input") or {}
-            if t.get("status") != "ok" or di.get("method_call", "").split("(")[0] != method:
-                continue
-            out.append({"params": {p["name"]: p["value"] for p in di.get("parameters", [])},
-                        "value": int(t.get("value") or 0), "from": t["from"]["hash"]})
-        params = d.get("next_page_params")
-        if not params:
-            break
-        params = {**params, "filter": "to"}
-    return out
+def _plain(v):
+    """Структуры из decode_function_input → кортежи (порядок полей как в ABI)."""
+    if isinstance(v, dict):
+        return tuple(_plain(x) for x in v.values())
+    if isinstance(v, (list, tuple)):
+        return type(v)(_plain(x) for x in v)
+    return v
+
+
+def _rpc_batch(batch: list) -> list:
+    """Пакетный JSON-RPC к Elysium. HTTP 429 и ошибки внутри пакета — исключением, чтобы with_retry повторил."""
+    r = requests.post(E[0], json=batch, timeout=60)
+    r.raise_for_status()
+    resp = r.json()
+    if not isinstance(resp, list):
+        raise RuntimeError(str(resp)[:300])
+    errs = [x["error"] for x in resp if x.get("error")]
+    if errs:
+        raise RuntimeError(str(errs[0])[:300])
+    return resp
+
+
+def recent_calls(addr: str, method: str, abi: list, log_address: str | None = None,
+                 topics: list | None = None, blocks: int = 20000, limit: int = 80) -> list[dict]:
+    """Свежие успешные вызовы method у контракта addr — напрямую через RPC Elysium, без эксплорера.
+    Транзакции находятся по событиям: логи log_address (по умолчанию сам addr) за последние blocks блоков
+    (~1 ч при 20000), затем пакетом читаются сами транзакции и раскодируется их вызов по abi.
+    Возвращает [{"params": {имя: значение}, "value": int, "from": адрес}], свежие первыми.
+    Результат кэшируется на CALLS_TTL секунд: все аккаунты делят одну выборку."""
+    key = (addr.lower(), method, (log_address or "").lower(), str(topics), blocks)
+    with _CALLS_LOCK:
+        hit = _CALLS_CACHE.get(key)
+        if hit and time.time() - hit[0] < CALLS_TTL:
+            return list(hit[1])
+        c = w3(E[0])
+        head = with_retry(lambda: c.eth.block_number)
+        flt = {"fromBlock": max(head - blocks, 0), "toBlock": head, "address": cs(log_address or addr)}
+        if topics:
+            flt["topics"] = topics
+        logs = with_retry(c.eth.get_logs, flt)
+        hashes = list(dict.fromkeys(lg["transactionHash"].to_0x_hex() for lg in reversed(logs)))[:limit]
+        dec = c.eth.contract(abi=abi)
+        out = []
+        for i in range(0, len(hashes), 10):  # Conduit считает каждый запрос пакета отдельно — пакеты малые
+            if i:
+                time.sleep(0.5)
+            batch = [{"jsonrpc": "2.0", "id": j, "method": "eth_getTransactionByHash", "params": [h]}
+                     for j, h in enumerate(hashes[i:i + 10])]
+            for r in sorted(with_retry(_rpc_batch, batch), key=lambda x: x.get("id", 0)):
+                tx = r.get("result") or {}
+                if (tx.get("to") or "").lower() != addr.lower():
+                    continue
+                try:
+                    fn, args = dec.decode_function_input(tx["input"])
+                except Exception:
+                    continue
+                if fn.fn_name != method:
+                    continue
+                out.append({"params": {k: _plain(v) for k, v in args.items()},
+                            "value": int(tx.get("value") or "0x0", 16), "from": tx["from"]})
+        _CALLS_CACHE[key] = (time.time(), out)
+        return list(out)
+
+
+def topic_addr(a: str) -> str:
+    """Адрес как индексированный topic события (32 байта)."""
+    return "0x" + "0" * 24 + a.lower().removeprefix("0x")
 
 
 def simulate(fn, acc: dict, value: int = 0):

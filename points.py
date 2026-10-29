@@ -77,10 +77,21 @@ def bunny_board() -> dict[str, int]:
     w3 = _w3()
     c = w3.eth.contract(address=BUNNY_LP, abi=_BUNNY_EVENTS)
     head, events = w3.eth.block_number, []
+
+    def logs(ev, a: int, b: int) -> list:
+        """События за [a, b]; если RPC упирается в лимит 10 000 событий за запрос — делим диапазон пополам."""
+        try:
+            return list(ev.get_logs(from_block=a, to_block=b))
+        except Exception as e:
+            if "limit" not in str(e).lower() or a >= b:
+                raise
+            mid = (a + b) // 2
+            return logs(ev, a, mid) + logs(ev, mid + 1, b)
+
     for a in range(BUNNY_FROM, head + 1, 2_000_000):
         b = min(a + 2_000_000 - 1, head)
-        events += [("launch", e) for e in c.events.TokenLaunched.get_logs(from_block=a, to_block=b)]
-        events += [("trade", e) for e in c.events.Trade.get_logs(from_block=a, to_block=b)]
+        events += [("launch", e) for e in logs(c.events.TokenLaunched, a, b)]
+        events += [("trade", e) for e in logs(c.events.Trade, a, b)]
     events.sort(key=lambda x: (x[1]["blockNumber"], x[1]["logIndex"]))
     quote_of, per_token, st = {}, {}, {}
     me_lp = BUNNY_LP.lower()

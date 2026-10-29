@@ -6,17 +6,18 @@ checkin():       чек-ин через их API (вход по подписи �
 claim_rewards(): claimEpochs за дни, где есть несобранная награда.
 
 swap(): HYPE → KALOS через SwapRouter Kalos (пул WHYPE/KALOS, комиссия 2%), при kalos_swap = 2 — весь KALOS обратно в HYPE.
-nft():  публичный минт в активном дропе SeaDrop. Дроп ищется по свежим успешным mintPublic в эксплорере:
+nft():  публичный минт в активном дропе SeaDrop. Коллекции берутся из событий SeaDropMint за ~8 ч (RPC):
         окно минта открыто, цена ≤ nft_max_price, у аккаунта ещё нет NFT этой коллекции.
 """
 from __future__ import annotations
 
 import random
+import threading
 import time
 
 from common import Config, log
-from onchain import (E, call, contract, cs, ensure_allowance, erc20_balance, fmt, pause, rand_amount, recent_calls,
-                     send_tx, simulate)
+from onchain import (E, call, contract, cs, ensure_allowance, erc20_balance, fmt, pause, rand_amount, send_tx,
+                     simulate, w3, with_retry)
 
 ROUTER = "0x752f6816Bc514e1Eeff852b2eAdcd96f6c0F9f3f"
 WHYPE = "0xCD57F65c2B0e5881CFC2E609F7CD53b746E1F234"
@@ -193,6 +194,41 @@ def swap(acc: dict, cfg: Config, tag: str) -> None:
     log.info("%s: kalos: %s KALOS → %s HYPE, %s", tag, fmt(got), fmt(out), link)
 
 
+SEADROP_MINT_TOPIC = "0xe90cf9cc0a552cf52ea6ff74ece0f1c8ae8cc9ad630d3181f55ac43ca076b7d6"
+DROPS_BLOCKS = 200_000  # ~8 ч истории минтов
+_drops_cache: tuple[float, dict] = (0.0, {})
+_drops_lock = threading.Lock()
+
+
+def _recent_drops() -> dict[str, str]:
+    """{коллекция: feeRecipient} по событиям SeaDropMint за последние DROPS_BLOCKS блоков.
+    Минтят через разные методы SeaDrop (публичный, подписанный), а событие одно — берём коллекции из него,
+    открыт ли публичный минт, проверяет getPublicDrop. Одна выборка на все потоки раз в 10 минут."""
+    global _drops_cache
+    with _drops_lock:
+        if time.time() - _drops_cache[0] < 600:
+            return dict(_drops_cache[1])
+        c = w3(E[0])
+        head = with_retry(lambda: c.eth.block_number)
+
+        def logs(a: int, b: int) -> list:
+            try:
+                return with_retry(c.eth.get_logs, {"fromBlock": a, "toBlock": b, "address": cs(SEADROP),
+                                                   "topics": [SEADROP_MINT_TOPIC]})
+            except Exception as e:
+                if "limit" not in str(e).lower() or a >= b:
+                    raise
+                mid = (a + b) // 2
+                return logs(a, mid) + logs(mid + 1, b)
+
+        out = {}
+        for lg in logs(max(head - DROPS_BLOCKS, 0), head):
+            t = lg["topics"]  # [событие, nftContract, minter, feeRecipient]
+            out[cs("0x" + t[1].hex()[-40:])] = cs("0x" + t[3].hex()[-40:])
+        _drops_cache = (time.time(), out)
+        return dict(out)
+
+
 def nft(acc: dict, cfg: Config, tag: str) -> None:
     if not cfg.opt("kalos", "kalos_nft", 0):
         return
@@ -200,12 +236,9 @@ def nft(acc: dict, cfg: Config, tag: str) -> None:
     max_price = int(cfg.opt("kalos", "nft_max_price", 0.001) * 10**18)
     sd = contract(E, SEADROP, SEADROP_ABI, acc)
     seen, now, minted = set(), int(time.time()), 0
-    calls = recent_calls(SEADROP, "mintPublic", pages=3)
-    random.shuffle(calls)
-    for c in calls:
-        nft_addr, fee_rcpt = cs(c["params"]["nftContract"]), cs(c["params"]["feeRecipient"])
-        if nft_addr in seen:
-            continue
+    drops = list(_recent_drops().items())
+    random.shuffle(drops)
+    for nft_addr, fee_rcpt in drops:
         seen.add(nft_addr)
         price, start, end, per_wallet, _, _ = call(sd.functions.getPublicDrop(nft_addr))
         if not (start <= now < end) or price > max_price:

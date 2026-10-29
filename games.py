@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import os
 import random
+import time
 
 from web3 import Web3
 
 from common import Config, log
-from onchain import E, call, contract, fmt, send_tx
+from onchain import E, call, contract, fmt, send_tx, w3, with_retry
 
 ELYSA_FLIP = "0xb68213Ec1088f6e62312da878f74E2E65Fc878Cf"
 FROG_FLIP = "0x2CaE9BAc2D5b500aAA860CCe0A3A20d387F384d4"
@@ -32,13 +33,32 @@ FROG_ABI = [
 
 
 def elysa(acc: dict, cfg: Config, tag: str) -> None:
+    """Серия мелких ставок в монетку ELYSA.FUN. Поинты идут за объём ставок (666 за 1 HYPE) плюс бонус серии дней,
+    равный поинтам дня (до 3500), а теряется в среднем ~2% объёма. Много ставок по минимуму дают тот же объём,
+    что одна крупная, но с куда меньшим разбросом. Серия обрывается, если HYPE на кошельке меньше elysa_floor."""
     if not cfg.opt("games", "elysa", 0):
         return
     g = contract(E, ELYSA_FLIP, ELYSA_ABI, acc)
     bet = max(int(cfg.opt("games", "elysa_bet", 0.01) * 10**18), call(g.functions.MIN_BET()))
-    side = random.randint(0, 1)
-    link = send_tx(E, acc, ELYSA_FLIP, g.encode_abi("flip", args=[side]), value=bet)
-    log.info("%s: elysa: ставка %s HYPE на %s, %s", tag, fmt(bet), ("орла", "решку")[side], link)
+    bets = max(int(cfg.opt("games", "elysa_bets", 1)), 1)
+    floor = int(cfg.opt("games", "elysa_floor", 0.0) * 10**18)
+    c = w3(E[0], acc)
+    done = 0
+    for _ in range(bets):
+        have = with_retry(c.eth.get_balance, acc["address"])
+        if have - bet < floor:
+            log.info("%s: elysa: стоп — на кошельке %s HYPE, порог %s", tag, fmt(have), fmt(floor))
+            break
+        side = random.randint(0, 1)
+        link = send_tx(E, acc, ELYSA_FLIP, g.encode_abi("flip", args=[side]), value=bet)
+        done += 1
+        log.info("%s: elysa: ставка %d/%d — %s HYPE на %s, %s", tag, done, bets, fmt(bet), ("орла", "решку")[side],
+                 link)
+        if done < bets:
+            time.sleep(random.uniform(2, 6))
+    if done > 1:
+        log.info("%s: elysa: объём за проход %s HYPE (~%d поинтов без бонуса серии)", tag, fmt(bet * done),
+                 int(666 * bet * done / 10**18))
 
 
 FROG_NAMES = "0x8463EC335192B4b0E5cc88ebF35e1B1121C875f3"  # ники игроков Frog Flip (бесплатно, только газ)

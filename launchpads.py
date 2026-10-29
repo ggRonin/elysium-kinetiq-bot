@@ -7,7 +7,7 @@ BunnyPad (bunnypad.fun): BunnyLaunchpad.buy(token, 0, minOut, to) с value в HY
     Не больше 30 засчитанных сделок на кошелёк в одном токене.
 PerpMe (perpme.fun/elysium): токены торгуются в их Uniswap V3 (свой роутер и wrapped HYPE), пул с комиссией 1%.
 
-Какой токен купить, бот решает по свежим успешным покупкам в эксплорере: берёт случайный из тех,
+Какой токен купить, бот решает по свежим успешным покупкам в сети (события через RPC, без эксплорера): берёт случайный из тех,
 что сейчас реально покупают, и проверяет покупку симуляцией. Минимум на выходе — результат симуляции минус slippage.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from collections import Counter
 
 from common import Config, log
 from onchain import (E, call, contract, cs, ensure_allowance, erc20_balance, fmt, pause, rand_amount,
-                     recent_calls, send_tx, simulate)
+                     recent_calls, send_tx, simulate, topic_addr, w3, with_retry)
 
 BUNNY_LP = "0x3c4F47959101557Eed9Bc4ae8D8D986aE8d3E5b1"
 PERP_ROUTER = "0xD218817cfCcA3Ae397dE3a6E66889D4Fb4b9e2D1"
@@ -51,6 +51,11 @@ BUNNY_CREATE_ABI = [
     {"type": "function", "name": "launchFee", "stateMutability": "view", "inputs": [], "outputs": [_U("fee")]},
 ]
 BUNNY_MAX_LAUNCHES = 10  # больше 10 запусков на кошелёк поинтов не дают
+# событие запуска токена BunnyLaunchpad: topics = [это, token, creator, quote]
+BUNNY_LAUNCH_TOPIC = "0x00aa4e081030a9d4e5022596b3e7554c97456e4d5a055b8ea86d09950d365467"
+BUNNY_FROM_BLOCK = 11_518_824  # деплой BunnyLaunchpad (как BUNNY_FROM в points.py)
+# Deposit(address indexed dst, uint256 wad) у wrapped HYPE PerpMe: так видно покупки за HYPE через их роутер
+WETH_DEPOSIT_TOPIC = "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c"
 _W1 = ["Moon", "Hype", "Lucky", "Turbo", "Neon", "Pixel", "Cosmic", "Wild", "Happy", "Golden", "Frosty", "Rocket",
        "Shiny", "Sleepy", "Mega", "Tiny", "Brave", "Silly", "Hyper", "Elysian"]
 _W2 = ["Bunny", "Frog", "Cat", "Pepe", "Otter", "Panda", "Fox", "Duck", "Whale", "Koala", "Llama", "Shark",
@@ -74,23 +79,11 @@ def _launch_meta() -> tuple[str, str, str]:
 
 
 def _my_launches(acc: dict) -> int:
-    """Сколько токенов этот кошелёк уже запустил на BunnyPad (по эксплореру)."""
-    from curl_cffi import requests as http
-    from onchain import EXPLORER_API
-    n, params = 0, {"filter": "from"}
-    for _ in range(5):
-        d = http.get(f"{EXPLORER_API}/addresses/{acc['address']}/transactions", params=params,
-                     impersonate="chrome136", timeout=40).json()
-        for t in d.get("items", []):
-            if (t.get("to") or {}).get("hash", "").lower() == BUNNY_LP.lower() and t.get("status") == "ok" \
-                    and (t.get("method") == "createToken" or (t.get("decoded_input") or {}).get(
-                        "method_call", "").startswith("createToken")):
-                n += 1
-        params = d.get("next_page_params")
-        if not params:
-            break
-        params = {**params, "filter": "from"}
-    return n
+    """Сколько токенов этот кошелёк уже запустил на BunnyPad: события запуска в сети, где создатель — он."""
+    c = w3(E[0])
+    logs = with_retry(c.eth.get_logs, {"fromBlock": BUNNY_FROM_BLOCK, "toBlock": "latest", "address": cs(BUNNY_LP),
+                                       "topics": [BUNNY_LAUNCH_TOPIC, None, topic_addr(acc["address"])]})
+    return len(logs)
 
 
 def bunnypad_launch(acc: dict, cfg: Config, tag: str) -> None:
@@ -125,25 +118,42 @@ def bunnypad(acc: dict, cfg: Config, tag: str) -> None:
     me = acc["address"]
     lp = contract(E, BUNNY_LP, BUNNY_ABI, acc)
     slip = cfg.opt("bunnypad", "slippage", 5.0) / 100
-    amt = rand_amount(cfg.opt("bunnypad", "buy_min", 0.0005), cfg.opt("bunnypad", "buy_max", 0.001))
-    for token in _candidates([c["params"]["token"] for c in recent_calls(BUNNY_LP, "buy", pages=3)]):
+    rounds = max(int(cfg.opt("bunnypad", "rounds", 1)), 1)
+    # в одном токене засчитываются не больше 30 сделок — каждый круг берём другой токен
+    tokens = _candidates([c["params"]["token"] for c in recent_calls(BUNNY_LP, "buy", BUNNY_ABI)],
+                         top=max(8, rounds * 2))
+    done = 0
+    for token in tokens:
+        if done >= rounds:
+            break
+        amt = rand_amount(cfg.opt("bunnypad", "buy_min", 0.0005), cfg.opt("bunnypad", "buy_max", 0.001))
         try:
             out = simulate(lp.functions.buy(token, 0, 0, me), acc, amt)
         except Exception as e:
             log.debug("%s: bunnypad: %s не покупается: %s", tag, token, e)
             continue
         before = erc20_balance(E, token, me, acc)
-        link = send_tx(E, acc, BUNNY_LP, lp.encode_abi("buy", args=[token, 0, int(out * (1 - slip)), me]), value=amt)
+        try:
+            link = send_tx(E, acc, BUNNY_LP, lp.encode_abi("buy", args=[token, 0, int(out * (1 - slip)), me]),
+                           value=amt)
+        except Exception as e:
+            if "отклонена" in str(e):  # цену сдвинули чужие покупки
+                log.info("%s: bunnypad: цена %s ушла, пробую другой токен", tag, token)
+                continue
+            raise
         got = erc20_balance(E, token, me, acc) - before
-        log.info("%s: bunnypad: купил токен %s за %s HYPE, %s", tag, token, fmt(amt), link)
+        done += 1
+        log.info("%s: bunnypad: круг %d/%d — купил токен %s за %s HYPE, %s", tag, done, rounds, token, fmt(amt), link)
         if mode == 2 and got > 0:
             pause(cfg)
             ensure_allowance(E, acc, token, BUNNY_LP, got, tag, "bunnypad")
             back = simulate(lp.functions.sell(token, got, 0, me), acc)
             link = send_tx(E, acc, BUNNY_LP, lp.encode_abi("sell", args=[token, got, int(back * (1 - slip)), me]))
             log.info("%s: bunnypad: продал обратно за %s HYPE, %s", tag, fmt(back), link)
-        return
-    log.info("%s: bunnypad: не нашёл токен, который сейчас можно купить", tag)
+        if done < rounds:
+            pause(cfg)
+    if not done:
+        log.info("%s: bunnypad: не нашёл токен, который сейчас можно купить", tag)
 
 
 def perpme(acc: dict, cfg: Config, tag: str) -> None:
@@ -154,7 +164,8 @@ def perpme(acc: dict, cfg: Config, tag: str) -> None:
     slip = cfg.opt("perpme", "slippage", 5.0) / 100
     amt = rand_amount(cfg.opt("perpme", "buy_min", 0.0005), cfg.opt("perpme", "buy_max", 0.001))
     tokens = []
-    for c in recent_calls(PERP_ROUTER, "exactInputSingle", pages=3):
+    for c in recent_calls(PERP_ROUTER, "exactInputSingle", PERP_ABI, log_address=PERP_WETH,
+                          topics=[WETH_DEPOSIT_TOPIC, topic_addr(PERP_ROUTER)]):
         p = c["params"]["params"]
         if cs(p[0]) == cs(PERP_WETH):  # покупки за HYPE
             tokens.append(p[1])

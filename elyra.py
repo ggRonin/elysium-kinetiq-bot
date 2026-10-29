@@ -16,7 +16,7 @@ import time
 
 from common import Config, log
 from onchain import (E, call, contract, cs, ensure_allowance, erc20_balance, fmt, fmt_units, pause, rand_amount,
-                     send_tx)
+                     send_tx, w3, with_retry)
 
 POOL = "0x9e4a4632985CBFC13c7143F121Ff0F99a0445bd1"
 GATEWAY = "0x44A8cF3dDc3a48CF2A0dcF59AAe830171f05Ea5e"
@@ -97,6 +97,30 @@ def faucet(acc: dict, cfg: Config, tag: str) -> None:
     log.info("%s: elyra: фосет — %s USDC + %s ELYRA, %s", tag, fmt_units(got_usdc, 6), fmt(got_elyra), link)
 
 
+def borrow_against_elyra(acc: dict, cfg: Config, tag: str, pool) -> None:
+    """Займ USDC под залог ELYRA (ELYRA бесплатный, с фосета) и депозит занятого USDC в рынок USDC.
+    Поинты: займ ×2 + депозит ×1 на ту же сумму; HYPE не тратится. Берётся доля лимита elyra_borrow_elyra_share:
+    при 40% ликвидация наступит, только если ELYRA подешевеет больше чем на 60%."""
+    me = acc["address"]
+    pos = call(contract(E, LENS, LENS_ABI, acc).functions.positionView(MARKET_ELYRA_COLLATERAL, me))
+    borrowed, max_borrow = pos[2], pos[6]
+    extra = int(max_borrow * cfg.opt("elyra", "elyra_borrow_elyra_share", 40.0) / 100) - borrowed
+    if extra < 10**6:  # меньше 1 USDC: позиции под $1 поинтов не дают
+        log.info("%s: elyra: займ под ELYRA не нужен (взято %s USDC, лимит %s)", tag, fmt_units(borrowed, 6),
+                 fmt_units(max_borrow, 6))
+        return
+    link = send_tx(E, acc, POOL, pool.encode_abi("borrow", args=[MARKET_ELYRA_COLLATERAL, extra, 0, me, me]))
+    log.info("%s: elyra: займ %s USDC под залог ELYRA (лимит %s), %s", tag, fmt_units(extra, 6),
+             fmt_units(max_borrow, 6), link)
+    pause(cfg)
+    if not cfg.opt("elyra", "elyra_borrow_elyra_resupply", 1):
+        return
+    ensure_allowance(E, acc, USDC, POOL, extra, tag, "elyra")
+    link = send_tx(E, acc, POOL, pool.encode_abi("supply", args=[MARKET_USDC_LOAN, extra, 0, me, b""]))
+    log.info("%s: elyra: занятые %s USDC — в депозит (рынок займа USDC), %s", tag, fmt_units(extra, 6), link)
+    pause(cfg)
+
+
 def run(acc: dict, cfg: Config, tag: str) -> None:
     if not cfg.opt("elyra", "elyra", 0):
         return
@@ -110,8 +134,18 @@ def run(acc: dict, cfg: Config, tag: str) -> None:
         pause(cfg)
 
     lo, hi = cfg.opt("elyra", "supply_hype_min", 0.0005), cfg.opt("elyra", "supply_hype_max", 0.001)
-    if hi > 0:
+    keep = cfg.opt("elyra", "supply_hype_keep", 0.0)
+    amt = 0
+    if keep > 0:
+        # всё, что сверх рабочего запаса, — в Elyra: HYPE считается ×2 каждый час и не тратится
+        have = with_retry(w3(E[0], acc).eth.get_balance, me)
+        amt = have - int(keep * 10**18)
+        if amt < int(max(lo, 0.015) * 10**18):  # позиции меньше $1 поинтов не дают
+            log.info("%s: elyra: HYPE не вношу — на кошельке %s, запас %s", tag, fmt(have), fmt(int(keep * 10**18)))
+            amt = 0
+    elif hi > 0:
         amt = rand_amount(lo, hi)
+    if amt:
         link = send_tx(E, acc, GATEWAY, gw.encode_abi("supplyHYPE", args=[MARKET_WHYPE_LOAN, me]), value=amt)
         log.info("%s: elyra: депозит %s HYPE (рынок займа WHYPE), %s", tag, fmt(amt), link)
         pause(cfg)
@@ -133,6 +167,9 @@ def run(acc: dict, cfg: Config, tag: str) -> None:
                 "supplyCollateral", args=[MARKET_ELYRA_COLLATERAL, elyra_bal, me, b""]))
             log.info("%s: elyra: залог %s ELYRA (без займа), %s", tag, fmt(elyra_bal), link)
             pause(cfg)
+
+    if cfg.opt("elyra", "elyra_borrow_elyra", 0):
+        borrow_against_elyra(acc, cfg, tag, pool)
 
     if not cfg.opt("elyra", "elyra_borrow", 0):
         return
